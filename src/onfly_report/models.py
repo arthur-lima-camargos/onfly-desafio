@@ -5,6 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
+
+
+class ReservationStatus(StrEnum):
+    """Status possíveis de uma reserva na exportação."""
+
+    CONFIRMED = "CONFIRMED"
+    CANCELLED = "CANCELLED"
+    NO_SHOW = "NO_SHOW"
 
 
 @dataclass(frozen=True)
