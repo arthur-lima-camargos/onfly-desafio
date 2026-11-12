@@ -37,6 +37,9 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
+      - name: Tipos (mypy)
+        run: mypy
+
       - name: Testes (pytest)
         run: pytest -q
 

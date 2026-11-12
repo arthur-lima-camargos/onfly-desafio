@@ -7,8 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from ..models import ReservationStatus
-from ..repositories.csv_rate_repository import CsvRateRepository
-from ..repositories.csv_reservation_repository import CsvReservationRepository
+from ..repositories.protocols import RateSource, ReservationSource
 from .currency_converter import convert_to_brl
 from .hotel_ranking import rank_hotels
 from .row_parser import RowParser
@@ -29,8 +28,8 @@ class ReportBuilder:
 
     def __init__(
         self,
-        reservation_repository: CsvReservationRepository,
-        rate_repository: CsvRateRepository,
+        reservation_repository: ReservationSource,
+        rate_repository: RateSource,
         top_n: int = 5,
         now: datetime | None = None,
     ) -> None:

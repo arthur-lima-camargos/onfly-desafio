@@ -12,6 +12,12 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 
+[tool.mypy]
+python_version = "3.11"
+mypy_path = ["src", "tests"]
+files = ["src", "tests"]
+explicit_package_bases = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
