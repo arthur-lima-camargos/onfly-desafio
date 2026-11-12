@@ -35,14 +35,23 @@ class CsvReservationRepository:
 
     def read(self) -> list[RawRow]:
         try:
-            with self._path.open("r", encoding="utf-8", newline="") as handle:
+            # utf-8-sig ignora o BOM que o Excel grava no início de exportações em UTF-8.
+            with self._path.open("r", encoding="utf-8-sig", newline="") as handle:
                 reader = csv.DictReader(handle)
                 missing = [column for column in REQUIRED_COLUMNS if column not in (reader.fieldnames or [])]
                 if missing:
                     raise InputFileError(f"colunas obrigatórias ausentes: {', '.join(missing)}")
 
-                return [RawRow(line_number=reader.line_num, values=values) for values in reader]
+                rows: list[RawRow] = []
+                for values in reader:
+                    # DictReader guarda colunas a mais na chave None e preenche as faltantes com None.
+                    if None in values or None in values.values():
+                        raise InputFileError(
+                            f"linha {reader.line_num} malformada: esperadas {len(reader.fieldnames or [])} colunas"
+                        )
+                    rows.append(RawRow(line_number=reader.line_num, values=values))
+                return rows
         except FileNotFoundError as err:
             raise InputFileError(f"arquivo de reservas não encontrado: {self._path}") from err
-        except (OSError, csv.Error) as err:
+        except (OSError, csv.Error, UnicodeDecodeError) as err:
             raise InputFileError(f"falha ao ler {self._path}: {err}") from err

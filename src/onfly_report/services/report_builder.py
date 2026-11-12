@@ -8,7 +8,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from ..models import ReservationStatus
 from ..repositories.protocols import RateSource, ReservationSource
-from .currency_converter import convert_to_brl
+from .currency_converter import convert_to_brl, ensure_rates_available
 from .hotel_ranking import rank_hotels
 from .row_parser import RowParser
 from .status_policy import is_billable
@@ -42,6 +42,7 @@ class ReportBuilder:
         parser = RowParser()
         reservations = [parser.parse(raw) for raw in self._reservation_repository.read()]
         rates = self._rate_repository.read()
+        ensure_rates_available(reservations, rates)
 
         status_counts = Counter(reservation.status for reservation in reservations)
 

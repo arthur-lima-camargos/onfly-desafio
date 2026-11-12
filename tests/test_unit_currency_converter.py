@@ -7,10 +7,13 @@ serialização do relatório).
 from decimal import Decimal
 
 import pytest
-from helpers import PROJECT_ROOT
+from helpers import BASE, PROJECT_ROOT
 
+from onfly_report.exceptions import InputFileError
+from onfly_report.models import RawRow
 from onfly_report.repositories.csv_rate_repository import CsvRateRepository
-from onfly_report.services.currency_converter import convert_to_brl
+from onfly_report.services.currency_converter import convert_to_brl, ensure_rates_available
+from onfly_report.services.row_parser import RowParser
 
 # Mesmo formato de data/taxas_cambio.csv (6 casas decimais).
 RATES = {"BRL": Decimal("1.000000"), "USD": Decimal("5.420000"), "EUR": Decimal("5.880000")}
@@ -135,3 +138,34 @@ def test_does_not_mutate_rate_table():
     brl("100.00", "USD", rates)
 
     assert rates == RATES
+
+
+# --- Cobertura da tabela de câmbio ------------------------------------------------------------
+
+
+def reservations(*rows: dict[str, str]):
+    parser = RowParser()
+    return [parser.parse(RawRow(line_number=index + 2, values={**BASE, **row})) for index, row in enumerate(rows)]
+
+
+def test_all_currencies_with_rate_pass():
+    ensure_rates_available(reservations({"currency": "BRL"}, {"currency": "USD"}, {"currency": "EUR"}), RATES)
+
+
+def test_currency_without_rate_is_rejected_with_lines():
+    rows = reservations({"currency": "BRL"}, {"currency": "GBP"}, {"currency": "JPY"}, {"currency": "GBP"})
+
+    with pytest.raises(InputFileError, match=r"moeda sem taxa de câmbio: GBP \(linhas 3, 5\); JPY \(linhas 4\)"):
+        ensure_rates_available(rows, RATES)
+
+
+@pytest.mark.parametrize("status", ["CANCELLED", "NO_SHOW"])
+def test_currency_without_rate_is_rejected_even_when_not_billable(status):
+    """Decisão: todas as reservas são checadas; moeda sem taxa indica arquivo inconsistente."""
+    with pytest.raises(InputFileError, match="GBP"):
+        ensure_rates_available(reservations({"currency": "GBP", "status": status}), RATES)
+
+
+def test_lowercase_currency_matches_uppercase_rate():
+    """O parser normaliza 'usd' para 'USD', igual à tabela de câmbio."""
+    ensure_rates_available(reservations({"currency": "usd"}), RATES)

@@ -63,3 +63,48 @@ def test_missing_required_column_raises_input_error(tmp_path):
 def test_missing_file_raises_input_error(tmp_path):
     with pytest.raises(InputFileError, match="não encontrado"):
         CsvReservationRepository(tmp_path / "inexistente.csv").read()
+
+
+def test_utf8_bom_is_ignored(tmp_path):
+    """Exportações do Excel começam com BOM; sem tratar, a 1ª coluna viraria '\\ufeffreservation_id'."""
+    path = tmp_path / "reservas.csv"
+    write_csv(path, [{}])
+    path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+
+    rows = CsvReservationRepository(path).read()
+
+    assert rows[0].values["reservation_id"] == "R-1"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        pytest.param("R-2,P,EMP,H01,Hotel,SP,BR,2025-01-10,2025-01-11,1,CONFIRMED,BRL,100.00", id="coluna-faltando"),
+        pytest.param(
+            "R-2,P,EMP,H01,Hotel,SP,BR,2025-01-10,2025-01-11,1,CONFIRMED,BRL,100.00,PIX,x,EXTRA",
+            id="coluna-sobrando",
+        ),
+        pytest.param(
+            "R-2,P,EMP,H09,Hotel Lisboa, Centro,Lisboa,PT,2025-01-10,2025-01-11,1,CONFIRMED,BRL,100.00,PIX,x",
+            id="virgula-no-nome-sem-aspas",
+        ),
+    ],
+)
+def test_malformed_line_is_rejected_with_its_number(tmp_path, line):
+    """Linha com número de colunas diferente do cabeçalho indica CSV corrompido."""
+    path = tmp_path / "reservas.csv"
+    write_csv(path, [{}])
+    path.write_text(path.read_text(encoding="utf-8") + line + "\n", encoding="utf-8")
+
+    with pytest.raises(InputFileError, match="linha 3 malformada"):
+        CsvReservationRepository(path).read()
+
+
+def test_invalid_utf8_is_an_input_error(tmp_path):
+    """Arquivo em outra codificação é entrada inválida (exit 2), não erro inesperado."""
+    path = tmp_path / "reservas.csv"
+    write_csv(path, [{"hotel_name": "Hotel São Paulo"}])
+    path.write_bytes(path.read_text(encoding="utf-8").encode("latin-1"))
+
+    with pytest.raises(InputFileError, match="falha ao ler"):
+        CsvReservationRepository(path).read()

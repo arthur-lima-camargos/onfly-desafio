@@ -38,7 +38,7 @@ class Reservation:
     checkin: date
     checkout: date
     rooms: int
-    status: str
+    status: ReservationStatus
     currency: str
     amount: Decimal
     payment_method: str
