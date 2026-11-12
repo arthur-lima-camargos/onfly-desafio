@@ -10,6 +10,7 @@ from ..models import ReservationStatus
 from ..repositories.csv_rate_repository import CsvRateRepository
 from ..repositories.csv_reservation_repository import CsvReservationRepository
 from .currency_converter import convert_to_brl
+from .hotel_ranking import rank_hotels
 from .row_parser import RowParser
 from .status_policy import is_billable
 from .stay_calculator import calculate_room_nights
@@ -87,15 +88,17 @@ class ReportBuilder:
             for month, data in sorted(monthly.items())
         ]
 
-        ranked_hotels = sorted(hotels.items(), key=lambda item: (item[1]["amount"], item[0]))
+        ranked_hotel_ids = rank_hotels(
+            {hotel_id: data["amount"] for hotel_id, data in hotels.items()}, self._top_n
+        )
         top_hotels = [
             {
                 "hotel_id": hotel_id,
-                "hotel_name": data["hotel_name"],
-                "room_nights": data["room_nights"],
-                "total_brl": format_money(data["amount"]),
+                "hotel_name": hotels[hotel_id]["hotel_name"],
+                "room_nights": hotels[hotel_id]["room_nights"],
+                "total_brl": format_money(hotels[hotel_id]["amount"]),
             }
-            for hotel_id, data in ranked_hotels[: self._top_n]
+            for hotel_id in ranked_hotel_ids
         ]
 
         now = self._now or datetime.now(FIXED_OFFSET)
