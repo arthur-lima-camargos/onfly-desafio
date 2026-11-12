@@ -7,6 +7,7 @@ import json
 
 import pytest
 from cli_support import VALID_ROW, row, run_cli_args, run_cli_rows, write_inputs
+from helpers import PROJECT_ROOT
 
 # --- 0: sucesso -------------------------------------------------------------------------------
 
@@ -161,3 +162,45 @@ def test_unwritable_output_exits_1(tmp_path):
 
     assert process.returncode == 1
     assert process.stdout == ""
+
+
+# --- 0 com aviso: suspeito, mas calculável ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "warning"),
+    [
+        pytest.param([row(), row(amount="50.00")], "reservation_id repetido", id="id-duplicado"),
+        pytest.param(
+            [row(), row(reservation_id="R-2", hotel_name="Outro")], "hotel_id com nomes diferentes", id="nome-hotel"
+        ),
+        pytest.param(
+            [row(), row(reservation_id="R-2", company_id="EMP-002")], "mais de uma empresa", id="varias-empresas"
+        ),
+    ],
+)
+def test_suspicious_input_warns_on_stderr_and_still_writes_the_report(tmp_path, rows, warning):
+    process, output_path = run_cli_rows(tmp_path, rows)
+
+    assert process.returncode == 0, process.stderr
+    assert "WARNING" in process.stderr
+    assert warning in process.stderr
+    assert process.stdout.startswith("Reservas: 2 |")
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert set(report) == {"report_version", "generated_at", "summary", "by_month", "top_hotels"}
+
+
+def test_real_dataset_runs_without_warnings(tmp_path):
+    process = run_cli_args(
+        [
+            "--input",
+            str(PROJECT_ROOT / "data" / "reservas_hoteis.csv"),
+            "--rates",
+            str(PROJECT_ROOT / "data" / "taxas_cambio.csv"),
+            "--output",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    assert process.returncode == 0, process.stderr
+    assert "WARNING" not in process.stderr

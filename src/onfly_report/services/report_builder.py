@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from ..models import ReservationStatus
 from ..repositories.protocols import RateSource, ReservationSource
+from .consistency_checks import find_inconsistencies
 from .currency_converter import convert_to_brl, ensure_rates_available
 from .hotel_ranking import rank_hotels
 from .row_parser import RowParser
@@ -16,6 +18,8 @@ from .stay_calculator import calculate_room_nights
 
 MONEY_QUANTUM = Decimal("0.01")
 FIXED_OFFSET = timezone(timedelta(hours=-3))
+
+logger = logging.getLogger(__name__)
 
 
 def format_money(value: Decimal) -> str:
@@ -43,6 +47,13 @@ class ReportBuilder:
         reservations = [parser.parse(raw) for raw in self._reservation_repository.read()]
         rates = self._rate_repository.read()
         ensure_rates_available(reservations, rates)
+        for message in find_inconsistencies(reservations):
+            logger.warning(message)
+
+        # Primeiro nome lido por hotel, na ordem do arquivo; nomes divergentes já foram avisados.
+        hotel_names: dict[str, str] = {}
+        for reservation in reservations:
+            hotel_names.setdefault(reservation.hotel_id, reservation.hotel_name)
 
         status_counts = Counter(reservation.status for reservation in reservations)
 
@@ -51,9 +62,7 @@ class ReportBuilder:
         monthly: dict[str, dict] = defaultdict(
             lambda: {"reservations": 0, "room_nights": 0, "amount": Decimal("0")}
         )
-        hotels: dict[str, dict] = defaultdict(
-            lambda: {"hotel_name": "", "room_nights": 0, "amount": Decimal("0")}
-        )
+        hotels: dict[str, dict] = defaultdict(lambda: {"room_nights": 0, "amount": Decimal("0")})
 
         total_nights = 0
         total_amount = Decimal("0")
@@ -70,7 +79,6 @@ class ReportBuilder:
             monthly[month_key]["room_nights"] += room_nights
             monthly[month_key]["amount"] += amount_brl
 
-            hotels[row.hotel_id]["hotel_name"] = row.hotel_name
             hotels[row.hotel_id]["room_nights"] += room_nights
             hotels[row.hotel_id]["amount"] += amount_brl
 
@@ -94,7 +102,7 @@ class ReportBuilder:
         top_hotels = [
             {
                 "hotel_id": hotel_id,
-                "hotel_name": hotels[hotel_id]["hotel_name"],
+                "hotel_name": hotel_names[hotel_id],
                 "room_nights": hotels[hotel_id]["room_nights"],
                 "total_brl": format_money(hotels[hotel_id]["amount"]),
             }

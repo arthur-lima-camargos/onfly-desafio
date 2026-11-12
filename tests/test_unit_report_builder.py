@@ -189,3 +189,38 @@ def test_money_is_serialized_as_string_with_two_decimals(money_field):
     value = report["summary"][money_field]
     assert isinstance(value, str)
     assert value == "1234.50"
+
+
+# --- Inconsistências suspeitas ----------------------------------------------------------------
+
+
+def test_divergent_hotel_name_uses_the_first_one_in_file_order():
+    """Mesmo que a primeira linha do hotel não seja faturável, o nome dela é o que vale."""
+    report = build(
+        [
+            {"reservation_id": "R-1", "hotel_name": "Hotel Primeiro", "status": "CANCELLED"},
+            {"reservation_id": "R-2", "hotel_name": "Hotel Segundo"},
+            {"reservation_id": "R-3", "hotel_name": "Hotel Terceiro"},
+        ]
+    )
+
+    assert report["top_hotels"][0]["hotel_name"] == "Hotel Primeiro"
+
+
+def test_inconsistencies_are_logged_as_warnings_and_report_is_still_built(caplog):
+    rows = [{"reservation_id": "R-1"}, {"reservation_id": "R-1", "amount": "50.00"}]
+
+    with caplog.at_level("WARNING", logger="onfly_report"):
+        report = build(rows)
+
+    assert [record.levelname for record in caplog.records] == ["WARNING"]
+    assert "reservation_id repetido" in caplog.records[0].getMessage()
+    assert report["summary"]["total_reservations"] == 2
+    assert report["summary"]["total_amount_brl"] == "150.00"
+
+
+def test_consistent_input_logs_nothing(caplog):
+    with caplog.at_level("WARNING", logger="onfly_report"):
+        build([{"reservation_id": "R-1"}, {"reservation_id": "R-2"}])
+
+    assert caplog.records == []
