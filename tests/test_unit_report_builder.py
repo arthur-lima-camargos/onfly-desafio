@@ -9,6 +9,7 @@ from decimal import Decimal, getcontext
 import pytest
 from helpers import BASE
 
+from onfly_report.exceptions import InputFileError
 from onfly_report.models import RawRow
 from onfly_report.services.report_builder import ReportBuilder
 
@@ -265,6 +266,28 @@ def test_inconsistencies_are_logged_as_warnings_and_report_is_still_built(caplog
     assert "reservation_id repetido" in caplog.records[0].getMessage()
     assert report["summary"]["total_reservations"] == 2
     assert report["summary"]["total_amount_brl"] == "150.00"
+
+
+def test_cancelled_reservation_in_currency_without_rate_warns_and_keeps_the_totals(caplog):
+    """A cancelada em GBP conta em total e cancelled, não entra em valores, e o relatório sai."""
+    rows = [{"reservation_id": "R-1"}, {"reservation_id": "R-2", "currency": "GBP", "status": "CANCELLED"}]
+
+    with caplog.at_level("WARNING", logger="onfly_report"):
+        summary = build(rows)["summary"]
+
+    assert [record.levelname for record in caplog.records] == ["WARNING"]
+    assert "GBP (linhas 3)" in caplog.records[0].getMessage()
+    assert (summary["total_reservations"], summary["confirmed_reservations"], summary["cancelled_reservations"]) == (
+        2,
+        1,
+        1,
+    )
+    assert summary["total_amount_brl"] == "100.00"
+
+
+def test_confirmed_reservation_in_currency_without_rate_is_still_an_input_error():
+    with pytest.raises(InputFileError, match=r"moeda sem taxa de câmbio: GBP \(linhas 2\)"):
+        build([{"currency": "GBP"}])
 
 
 def test_consistent_input_logs_nothing(caplog):

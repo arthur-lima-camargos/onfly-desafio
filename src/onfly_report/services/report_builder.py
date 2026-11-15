@@ -11,7 +11,7 @@ from ..models import ReservationStatus
 from ..number_format import MONEY_PRECISION
 from ..repositories.protocols import RateSource, ReservationSource
 from .consistency_checks import find_inconsistencies
-from .currency_converter import convert_to_brl, ensure_rates_available
+from .currency_converter import convert_to_brl, ensure_rates_available, unbilled_currencies_without_rate
 from .hotel_ranking import rank_hotels
 from .row_parser import RowParser
 from .status_policy import is_billable
@@ -53,7 +53,7 @@ class ReportBuilder:
         reservations = [parser.parse(raw) for raw in self._reservation_repository.read()]
         rates = self._rate_repository.read()
         ensure_rates_available(reservations, rates)
-        for message in find_inconsistencies(reservations):
+        for message in (*find_inconsistencies(reservations), *unbilled_currencies_without_rate(reservations, rates)):
             logger.warning(message)
 
         # Primeiro nome lido por hotel, na ordem do arquivo; nomes divergentes já foram avisados.

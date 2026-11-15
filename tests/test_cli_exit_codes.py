@@ -107,7 +107,6 @@ def test_missing_file_exits_2(tmp_path, which):
         pytest.param([row(status="PENDING")], "status desconhecido", id="status-desconhecido"),
         pytest.param([row(status="confirmed")], "status desconhecido", id="status-minusculo"),
         pytest.param([row(currency="GBP")], "moeda sem taxa de câmbio: GBP", id="moeda-sem-taxa"),
-        pytest.param([row(currency="GBP", status="CANCELLED")], "GBP", id="moeda-sem-taxa-em-cancelada"),
         pytest.param([row(rooms="0")], "rooms deve ser maior ou igual a 1", id="zero-quartos"),
         pytest.param([row(checkout_date="2025-01-05")], "anterior a checkin_date", id="checkout-antes"),
         pytest.param([row(amount="-100.00")], AMOUNT_FORMAT_ERROR, id="valor-negativo"),
@@ -204,6 +203,16 @@ def test_unwritable_output_exits_1(tmp_path):
         ),
         pytest.param(
             [row(), row(reservation_id="R-2", company_id="EMP-002")], "mais de uma empresa", id="varias-empresas"
+        ),
+        pytest.param(
+            [row(), row(reservation_id="R-2", currency="GBP", status="CANCELLED")],
+            "moeda sem taxa de câmbio em reserva não faturável, fora dos totais: GBP (linhas 3)",
+            id="moeda-sem-taxa-em-cancelada",
+        ),
+        pytest.param(
+            [row(), row(reservation_id="R-2", currency="GBP", status="NO_SHOW")],
+            "moeda sem taxa de câmbio em reserva não faturável, fora dos totais: GBP (linhas 3)",
+            id="moeda-sem-taxa-em-no-show",
         ),
     ],
 )

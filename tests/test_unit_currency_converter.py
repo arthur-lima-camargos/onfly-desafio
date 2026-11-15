@@ -12,7 +12,11 @@ from helpers import BASE, PROJECT_ROOT
 from onfly_report.exceptions import InputFileError
 from onfly_report.models import RawRow
 from onfly_report.repositories.csv_rate_repository import CsvRateRepository
-from onfly_report.services.currency_converter import convert_to_brl, ensure_rates_available
+from onfly_report.services.currency_converter import (
+    convert_to_brl,
+    ensure_rates_available,
+    unbilled_currencies_without_rate,
+)
 from onfly_report.services.row_parser import RowParser
 
 # Mesmo formato de data/taxas_cambio.csv (6 casas decimais).
@@ -160,10 +164,55 @@ def test_currency_without_rate_is_rejected_with_lines():
 
 
 @pytest.mark.parametrize("status", ["CANCELLED", "NO_SHOW"])
-def test_currency_without_rate_is_rejected_even_when_not_billable(status):
-    """Decisão: todas as reservas são checadas; moeda sem taxa indica arquivo inconsistente."""
-    with pytest.raises(InputFileError, match="GBP"):
-        ensure_rates_available(reservations({"currency": "GBP", "status": status}), RATES)
+def test_currency_without_rate_is_not_an_error_when_the_reservation_is_not_billable(status):
+    """Só a reserva faturável é convertida: sem ela, o relatório é calculável sem essa taxa."""
+    ensure_rates_available(reservations({"currency": "GBP", "status": status}), RATES)
+
+
+def test_error_lists_only_the_billable_lines_of_a_currency_without_rate():
+    """GBP faturável na linha 3 bloqueia; a cancelada na linha 4 não entra na mensagem de erro."""
+    rows = reservations({"currency": "BRL"}, {"currency": "GBP"}, {"currency": "GBP", "status": "CANCELLED"})
+
+    with pytest.raises(InputFileError, match=r"moeda sem taxa de câmbio: GBP \(linhas 3\)$"):
+        ensure_rates_available(rows, RATES)
+
+
+# --- Aviso: moeda sem taxa em reserva fora dos totais -----------------------------------------
+
+
+@pytest.mark.parametrize("status", ["CANCELLED", "NO_SHOW"])
+def test_unbilled_reservation_in_currency_without_rate_is_a_warning(status):
+    rows = reservations({"currency": "BRL"}, {"currency": "GBP", "status": status})
+
+    assert unbilled_currencies_without_rate(rows, RATES) == [
+        "moeda sem taxa de câmbio em reserva não faturável, fora dos totais: GBP (linhas 3)"
+    ]
+
+
+def test_warning_groups_lines_by_currency_in_alphabetical_order():
+    rows = reservations(
+        {"currency": "JPY", "status": "NO_SHOW"},
+        {"currency": "GBP", "status": "CANCELLED"},
+        {"currency": "JPY", "status": "CANCELLED"},
+    )
+
+    assert unbilled_currencies_without_rate(rows, RATES) == [
+        "moeda sem taxa de câmbio em reserva não faturável, fora dos totais: GBP (linhas 3); JPY (linhas 2, 4)"
+    ]
+
+
+def test_billable_reservation_in_currency_without_rate_is_not_part_of_the_warning():
+    """A faturável é erro (ensure_rates_available), não aviso."""
+    assert unbilled_currencies_without_rate(reservations({"currency": "GBP"}), RATES) == []
+
+
+@pytest.mark.parametrize("status", ["CONFIRMED", "CANCELLED", "NO_SHOW"])
+def test_currency_with_rate_never_warns(status):
+    assert unbilled_currencies_without_rate(reservations({"currency": "USD", "status": status}), RATES) == []
+
+
+def test_empty_file_has_no_rate_warning():
+    assert unbilled_currencies_without_rate([], RATES) == []
 
 
 def test_lowercase_currency_matches_uppercase_rate():
