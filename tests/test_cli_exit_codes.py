@@ -4,6 +4,7 @@ Contrato do README: 0 sucesso, 2 entrada/argumento inválido, 1 erro inesperado.
 """
 
 import json
+import os
 
 import pytest
 from cli_support import VALID_ROW, row, run_cli_args, run_cli_rows, write_inputs
@@ -20,6 +21,19 @@ def test_success_exits_0_with_summary_on_stdout_and_report_written(tmp_path):
     assert process.returncode == 0, process.stderr
     assert process.stdout.strip() == "Reservas: 1 | Confirmadas: 1 | Noites: 1 | Total BRL: 100.00"
     assert json.loads(output_path.read_text(encoding="utf-8"))["summary"]["total_amount_brl"] == "100.00"
+
+
+def test_successful_run_replaces_the_previous_report_and_leaves_no_temporary_file(tmp_path):
+    input_path, rates_path = write_inputs(tmp_path, [VALID_ROW])
+    output_path = tmp_path / "saida" / "report.json"
+    output_path.parent.mkdir()
+    output_path.write_text("relatório antigo", encoding="utf-8")
+
+    process = run_cli_args(["--input", str(input_path), "--rates", str(rates_path), "--output", str(output_path)])
+
+    assert process.returncode == 0, process.stderr
+    assert json.loads(output_path.read_text(encoding="utf-8"))["summary"]["total_reservations"] == 1
+    assert [item.name for item in output_path.parent.iterdir()] == ["report.json"]
 
 
 def test_output_directory_is_created(tmp_path):
@@ -72,6 +86,76 @@ def test_invalid_argument_exits_2(tmp_path, extra):
 
     assert process.returncode == 2
     assert not output_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("abbreviated", "full"),
+    [
+        pytest.param("--inp", "--input", id="input"),
+        pytest.param("--rat", "--rates", id="rates"),
+        pytest.param("--out", "--output", id="output"),
+        pytest.param("--to", "--top", id="top"),
+    ],
+)
+def test_abbreviated_argument_exits_2(tmp_path, abbreviated, full):
+    """O contrato lista quatro argumentos; o argparse, por padrão, aceitaria qualquer prefixo deles."""
+    input_path, rates_path = write_inputs(tmp_path, [VALID_ROW])
+    output_path = tmp_path / "report.json"
+    args = {"--input": str(input_path), "--rates": str(rates_path), "--output": str(output_path), "--top": "5"}
+    args[abbreviated] = args.pop(full)
+
+    process = run_cli_args([item for pair in args.items() for item in pair])
+
+    assert process.returncode == 2
+    assert not output_path.exists()
+
+
+def spell_differently(path):
+    """O mesmo arquivo escrito de outro jeito: sobe um diretório e desce de volta (dir/../dir/arquivo).
+
+    Um "./" não serviria: o pathlib já o remove, e o texto do caminho ficaria igual.
+    """
+    return str(path.parent / ".." / path.parent.name / path.name)
+
+
+@pytest.mark.parametrize("which", ["--input", "--rates"])
+@pytest.mark.parametrize("spelling", [str, spell_differently], ids=["mesmo-texto", "caminho-escrito-diferente"])
+def test_output_pointing_to_an_input_file_exits_2_and_keeps_the_input(tmp_path, which, spelling):
+    """Antes, --output igual a --input trocava o CSV de origem pelo JSON, com exit 0."""
+    input_path, rates_path = write_inputs(tmp_path, [VALID_ROW])
+    paths = {"--input": input_path, "--rates": rates_path}
+    before = paths[which].read_bytes()
+
+    process = run_cli_args(
+        ["--input", str(input_path), "--rates", str(rates_path), "--output", spelling(paths[which])]
+    )
+
+    assert process.returncode == 2
+    assert f"--output não pode ser o mesmo arquivo de {which}" in process.stderr
+    assert "Traceback" not in process.stderr
+    assert process.stdout == ""
+    assert paths[which].read_bytes() == before
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["rates.csv", "reservas.csv"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="caminhos só ignoram caixa no Windows")
+def test_output_pointing_to_the_input_in_another_case_exits_2_on_windows(tmp_path):
+    input_path, rates_path = write_inputs(tmp_path, [VALID_ROW])
+    before = input_path.read_bytes()
+
+    process = run_cli_args(
+        ["--input", str(input_path), "--rates", str(rates_path), "--output", str(input_path).upper()]
+    )
+
+    assert process.returncode == 2
+    assert input_path.read_bytes() == before
+
+
+def test_output_next_to_the_inputs_with_another_name_is_fine(tmp_path):
+    process, output_path = run_cli_rows(tmp_path, [VALID_ROW])
+
+    assert process.returncode == 0, process.stderr
+    assert output_path.parent == tmp_path
 
 
 @pytest.mark.parametrize("missing", ["--input", "--rates"])
@@ -206,6 +290,8 @@ def test_unwritable_output_exits_1(tmp_path):
 
     assert process.returncode == 1
     assert process.stdout == ""
+    assert output_is_a_directory.is_dir()
+    assert not (tmp_path / "saida.tmp").exists()
 
 
 # --- 0 com aviso: suspeito, mas calculável ----------------------------------------------------
