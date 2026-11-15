@@ -136,20 +136,49 @@ def test_checkout_equal_to_checkin_is_accepted_with_zero_nights():
 # --- Quartos ----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("rooms", ["0", "-1"])
-def test_rooms_below_one_are_rejected(rooms):
+@pytest.mark.parametrize(("rooms", "expected"), [("1", 1), ("2", 2), ("01", 1), ("9999", 9999)])
+def test_plain_integer_rooms_are_accepted(rooms, expected):
+    assert parse(rooms=rooms).rooms == expected
+
+
+@pytest.mark.parametrize("rooms", ["0", "00", "0000"])
+def test_zero_rooms_are_rejected(rooms):
     assert_rejected("rooms deve ser maior ou igual a 1", rooms=rooms)
 
 
-@pytest.mark.parametrize("rooms", ["1.5", "dois", "1e2"])
-def test_non_integer_rooms_are_rejected(rooms):
-    assert_rejected("rooms não é um inteiro", rooms=rooms)
+@pytest.mark.parametrize(
+    "rooms",
+    [
+        pytest.param("1_0", id="sublinhado-que-int-leria-como-10"),
+        pytest.param("+2", id="sinal-de-mais"),
+        pytest.param("-1", id="negativo"),
+        pytest.param("２", id="digito-unicode-de-largura-total"),
+        pytest.param("٣", id="digito-arabe-indico"),
+        pytest.param("1.5", id="fracionario"),
+        pytest.param("1.0", id="inteiro-escrito-com-ponto"),
+        pytest.param("1e2", id="notacao-cientifica"),
+        pytest.param("0x2", id="hexadecimal"),
+        pytest.param("1 0", id="espaco-no-meio"),
+        pytest.param("dois", id="texto"),
+        pytest.param("10000", id="cinco-digitos"),
+        pytest.param("9" * 5000, id="inteiro-gigante"),
+    ],
+)
+def test_rooms_outside_the_plain_integer_format_are_rejected(rooms):
+    """int() leria vários destes como número; numa exportação, indicam arquivo corrompido."""
+    assert_rejected("rooms fora do formato inteiro simples", rooms=rooms)
 
 
 # --- Valor ------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("amount", ["0.00", "0", "0.125", "1234.5"])
+AMOUNT_FORMAT_ERROR = "amount fora do formato decimal simples"
+
+
+@pytest.mark.parametrize(
+    "amount",
+    ["0.00", "0", "0.125", "1234.5", "007.50", "0.000001", "999999999999999", "999999999999999.999999"],
+)
 def test_valid_amounts_are_kept_exact(amount):
     """Zero (cortesia) é aceito e mais de 2 casas não é cortado: arredondar é só na serialização."""
     assert parse(amount=amount).amount == Decimal(amount)
@@ -157,13 +186,54 @@ def test_valid_amounts_are_kept_exact(amount):
 
 @pytest.mark.parametrize("amount", ["NaN", "nan", "sNaN", "Infinity", "-Infinity", "inf"])
 def test_non_finite_amount_is_rejected(amount):
-    assert_rejected("amount não é um número finito", amount=amount)
+    assert_rejected(AMOUNT_FORMAT_ERROR, amount=amount)
 
 
-def test_negative_amount_is_rejected():
-    assert_rejected("amount negativo", amount="-100.00")
+@pytest.mark.parametrize("amount", ["-100.00", "-0", "-0.01"])
+def test_negative_amount_is_rejected(amount):
+    assert_rejected(AMOUNT_FORMAT_ERROR, amount=amount)
 
 
-@pytest.mark.parametrize("amount", ["R$ 100,00", "100,00", "abc"])
+@pytest.mark.parametrize("amount", ["R$ 100,00", "100,00", "1.234,56", "abc"])
 def test_non_numeric_amount_is_rejected(amount):
-    assert_rejected("amount não é um número", amount=amount)
+    assert_rejected(AMOUNT_FORMAT_ERROR, amount=amount)
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [
+        pytest.param("1_000.50", id="sublinhado-que-decimal-leria-como-1000.50"),
+        pytest.param("1E+3", id="notacao-cientifica-maiuscula"),
+        pytest.param("1e3", id="notacao-cientifica-minuscula"),
+        pytest.param("+10", id="sinal-de-mais"),
+        pytest.param("２", id="digito-unicode-de-largura-total"),
+        pytest.param("١٠٠", id="digitos-arabe-indicos"),
+        pytest.param(".5", id="sem-parte-inteira"),
+        pytest.param("5.", id="ponto-sem-decimais"),
+        pytest.param("1.2.3", id="dois-pontos"),
+        pytest.param("1 000", id="espaco-no-meio"),
+        pytest.param("0x10", id="hexadecimal"),
+    ],
+)
+def test_amount_that_decimal_would_read_but_is_not_plain_is_rejected(amount):
+    """Decimal() leria vários destes como número; numa exportação, indicam arquivo corrompido."""
+    assert_rejected(AMOUNT_FORMAT_ERROR, amount=amount)
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [
+        pytest.param("1E+40", id="expoente-enorme"),
+        pytest.param("1" * 16, id="16-digitos-inteiros"),
+        pytest.param("1" * 30, id="30-digitos-acima-da-precisao-padrao-do-decimal"),
+        pytest.param("0.1234567", id="7-casas-decimais"),
+    ],
+)
+def test_amount_beyond_the_size_limits_is_rejected(amount):
+    """Antes, estes passavam pelo parser e estouravam no quantize, com traceback e exit 1."""
+    assert_rejected(AMOUNT_FORMAT_ERROR, amount=amount)
+
+
+def test_rejected_amount_message_shows_the_line_and_the_offending_text():
+    with pytest.raises(InputFileError, match=r"linha 9 inválida: amount fora do formato.*'1_000\.50'"):
+        parse(9, amount="1_000.50")

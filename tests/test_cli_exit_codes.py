@@ -9,6 +9,8 @@ import pytest
 from cli_support import VALID_ROW, row, run_cli_args, run_cli_rows, write_inputs
 from helpers import PROJECT_ROOT
 
+AMOUNT_FORMAT_ERROR = "amount fora do formato decimal simples"
+
 # --- 0: sucesso -------------------------------------------------------------------------------
 
 
@@ -108,8 +110,14 @@ def test_missing_file_exits_2(tmp_path, which):
         pytest.param([row(currency="GBP", status="CANCELLED")], "GBP", id="moeda-sem-taxa-em-cancelada"),
         pytest.param([row(rooms="0")], "rooms deve ser maior ou igual a 1", id="zero-quartos"),
         pytest.param([row(checkout_date="2025-01-05")], "anterior a checkin_date", id="checkout-antes"),
-        pytest.param([row(amount="-100.00")], "amount negativo", id="valor-negativo"),
-        pytest.param([row(amount="NaN")], "amount não é um número finito", id="valor-nan"),
+        pytest.param([row(amount="-100.00")], AMOUNT_FORMAT_ERROR, id="valor-negativo"),
+        pytest.param([row(amount="NaN")], AMOUNT_FORMAT_ERROR, id="valor-nan"),
+        pytest.param([row(amount="1_000.50")], AMOUNT_FORMAT_ERROR, id="valor-com-sublinhado"),
+        pytest.param([row(amount="1E+3")], AMOUNT_FORMAT_ERROR, id="valor-em-notacao-cientifica"),
+        pytest.param([row(amount="1E+40")], AMOUNT_FORMAT_ERROR, id="valor-com-expoente-enorme"),
+        pytest.param([row(amount="1" * 30)], AMOUNT_FORMAT_ERROR, id="valor-de-30-digitos"),
+        pytest.param([row(rooms="1_0")], "rooms fora do formato inteiro simples", id="quartos-com-sublinhado"),
+        pytest.param([row(rooms="２")], "rooms fora do formato inteiro simples", id="quartos-em-digito-unicode"),
         pytest.param([row(checkin_date="20250110")], "fora do formato YYYY-MM-DD", id="data-sem-hifen"),
         pytest.param([row(hotel_id="")], "campos obrigatórios vazios: hotel_id", id="hotel-vazio"),
         pytest.param([VALID_ROW.rsplit(",", 1)[0]], "linha 2 malformada", id="linha-curta"),
@@ -125,6 +133,25 @@ def test_invalid_reservation_exits_2_with_reason_and_no_report(tmp_path, rows, m
     assert not output_path.exists()
 
 
+def test_largest_accepted_amounts_are_summed_exactly_without_traceback(tmp_path):
+    """3 x 999999999999999.999999 USD a 5.42, com o esperado contado em inteiros (sem Decimal nem float).
+
+    O total tem 29 dígitos significativos: na precisão padrão do Decimal (28) a soma seria
+    arredondada em silêncio.
+    """
+    rows = [row(reservation_id=f"R-{n}", currency="USD", amount="999999999999999.999999") for n in range(3)]
+
+    process, output_path = run_cli_rows(tmp_path, rows)
+
+    total_in_millionths_of_cent = 3 * 999999999999999999999 * 542
+    cents, remainder = divmod(total_in_millionths_of_cent, 10**6)
+    cents += remainder >= 5 * 10**5
+    assert process.returncode == 0, process.stderr
+    assert json.loads(output_path.read_text(encoding="utf-8"))["summary"]["total_amount_brl"] == (
+        f"{cents // 100}.{cents % 100:02d}"
+    )
+
+
 def test_invalid_line_is_reported_by_number(tmp_path):
     process, _ = run_cli_rows(tmp_path, [VALID_ROW, row(reservation_id="R-2"), row(reservation_id="R-3", rooms="x")])
 
@@ -136,7 +163,8 @@ def test_invalid_line_is_reported_by_number(tmp_path):
     ("rates", "message"),
     [
         pytest.param("currency,rate_to_brl\nBRL,1\nBRL,2\n", "moeda BRL repetida", id="moeda-repetida"),
-        pytest.param("currency,rate_to_brl\nBRL,NaN\n", "taxa não finita", id="taxa-nan"),
+        pytest.param("currency,rate_to_brl\nBRL,NaN\n", "taxa fora do formato decimal simples", id="taxa-nan"),
+        pytest.param("currency,rate_to_brl\nBRL,1E+30\n", "taxa fora do formato decimal simples", id="taxa-enorme"),
         pytest.param("moeda,taxa\nBRL,1\n", "colunas obrigatórias ausentes", id="cabecalho-errado"),
     ],
 )

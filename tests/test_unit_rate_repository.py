@@ -8,6 +8,8 @@ from helpers import PROJECT_ROOT
 from onfly_report.exceptions import InputFileError
 from onfly_report.repositories.csv_rate_repository import CsvRateRepository
 
+RATE_FORMAT_ERROR = "taxa fora do formato decimal simples para USD"
+
 
 def read_rates(tmp_path, content: str, encoding: str = "utf-8") -> dict[str, Decimal]:
     path = tmp_path / "rates.csv"
@@ -29,6 +31,13 @@ def test_rate_keeps_every_decimal_place(tmp_path):
     assert read_rates(tmp_path, "currency,rate_to_brl\nUSD,5.420001\n")["USD"] == Decimal("5.420001")
 
 
+def test_very_small_rate_keeps_twelve_decimal_places(tmp_path):
+    """Moeda de valor unitário baixo: a taxa pode ter mais casas que as 6 da tabela fornecida."""
+    rates = read_rates(tmp_path, "currency,rate_to_brl\nIDR,0.000350123456\n")
+
+    assert rates["IDR"] == Decimal("0.000350123456")
+
+
 def test_utf8_bom_is_ignored(tmp_path):
     """Exportações do Excel começam com BOM; sem tratar, o cabeçalho viraria '\\ufeffcurrency'."""
     assert read_rates(tmp_path, "currency,rate_to_brl\nBRL,1\n", encoding="utf-8-sig") == {"BRL": Decimal("1")}
@@ -38,11 +47,20 @@ def test_utf8_bom_is_ignored(tmp_path):
     ("content", "match"),
     [
         pytest.param("currency,rate_to_brl\nUSD,5.42\nusd,6.00\n", "moeda USD repetida", id="moeda-repetida"),
-        pytest.param("currency,rate_to_brl\nUSD,NaN\n", "taxa não finita", id="nan"),
-        pytest.param("currency,rate_to_brl\nUSD,Infinity\n", "taxa não finita", id="infinito"),
-        pytest.param("currency,rate_to_brl\nUSD,0\n", "taxa não positiva", id="zero"),
-        pytest.param("currency,rate_to_brl\nUSD,-5.42\n", "taxa não positiva", id="negativa"),
-        pytest.param("currency,rate_to_brl\nUSD,cinco\n", "taxa inválida", id="nao-numerica"),
+        pytest.param("currency,rate_to_brl\nUSD,NaN\n", RATE_FORMAT_ERROR, id="nan"),
+        pytest.param("currency,rate_to_brl\nUSD,Infinity\n", RATE_FORMAT_ERROR, id="infinito"),
+        pytest.param("currency,rate_to_brl\nUSD,-5.42\n", RATE_FORMAT_ERROR, id="negativa"),
+        pytest.param("currency,rate_to_brl\nUSD,cinco\n", RATE_FORMAT_ERROR, id="nao-numerica"),
+        pytest.param('currency,rate_to_brl\nUSD,"5,42"\n', RATE_FORMAT_ERROR, id="virgula-decimal"),
+        pytest.param("currency,rate_to_brl\nUSD,5_0\n", RATE_FORMAT_ERROR, id="sublinhado"),
+        pytest.param("currency,rate_to_brl\nUSD,5.42E+0\n", RATE_FORMAT_ERROR, id="notacao-cientifica"),
+        pytest.param("currency,rate_to_brl\nUSD,+5.42\n", RATE_FORMAT_ERROR, id="sinal-de-mais"),
+        pytest.param("currency,rate_to_brl\nUSD,５.42\n", RATE_FORMAT_ERROR, id="digito-unicode"),
+        pytest.param("currency,rate_to_brl\nUSD,1E+30\n", RATE_FORMAT_ERROR, id="expoente-enorme"),
+        pytest.param("currency,rate_to_brl\nUSD,1234567890\n", RATE_FORMAT_ERROR, id="10-digitos-inteiros"),
+        pytest.param("currency,rate_to_brl\nUSD,0.1234567890123\n", RATE_FORMAT_ERROR, id="13-casas"),
+        pytest.param("currency,rate_to_brl\nUSD,0\n", "taxa zero", id="zero"),
+        pytest.param("currency,rate_to_brl\nUSD,0.000000\n", "taxa zero", id="zero-com-casas"),
         pytest.param("currency,rate_to_brl\nUSD,\n", "linha de câmbio incompleta", id="taxa-vazia"),
         pytest.param("currency,rate_to_brl\nUSD\n", "linha 2 malformada", id="coluna-faltando"),
         pytest.param("currency,rate_to_brl\nUSD,5.42,extra\n", "linha 2 malformada", id="coluna-sobrando"),

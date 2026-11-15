@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from ..exceptions import InputFileError
 from ..models import RawRow, Reservation, ReservationStatus
+from ..number_format import PLAIN_AMOUNT, PLAIN_ROOMS, parse_plain_decimal, parse_plain_int
 
 CIVIL_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
@@ -35,7 +36,7 @@ class RowParser:
     def parse(self, raw: RawRow) -> Reservation:
         try:
             return self._parse(raw)
-        except (ValueError, InvalidOperation) as err:
+        except ValueError as err:
             raise InputFileError(f"linha {raw.line_number} inválida: {err}") from err
 
     def _parse(self, raw: RawRow) -> Reservation:
@@ -80,10 +81,10 @@ def parse_civil_date(text: str, field: str) -> date:
 
 
 def parse_rooms(text: str) -> int:
-    try:
-        rooms = int(text)
-    except ValueError as err:
-        raise ValueError(f"rooms não é um inteiro: {text!r}") from err
+    """Aceita só dígitos: int() sozinho leria "1_0" como 10 quartos."""
+    rooms = parse_plain_int(text, PLAIN_ROOMS)
+    if rooms is None:
+        raise ValueError(f"rooms fora do formato inteiro simples (1 a 4 dígitos, sem sinal): {text!r}")
     if rooms < 1:
         raise ValueError(f"rooms deve ser maior ou igual a 1: {rooms}")
     return rooms
@@ -99,12 +100,11 @@ def parse_status(text: str) -> ReservationStatus:
 
 
 def parse_amount(text: str) -> Decimal:
-    try:
-        amount = Decimal(text)
-    except InvalidOperation as err:
-        raise ValueError(f"amount não é um número: {text!r}") from err
-    if not amount.is_finite():
-        raise ValueError(f"amount não é um número finito: {text!r}")
-    if amount < 0:
-        raise ValueError(f"amount negativo: {text!r}")
+    """Um formato só barra valor negativo, NaN, infinito, notação científica e estouro de precisão."""
+    amount = parse_plain_decimal(text, PLAIN_AMOUNT)
+    if amount is None:
+        raise ValueError(
+            "amount fora do formato decimal simples "
+            f"(até 15 dígitos inteiros e 6 decimais, sem sinal nem expoente): {text!r}"
+        )
     return amount

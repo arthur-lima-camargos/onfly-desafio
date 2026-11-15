@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import csv
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from ..exceptions import InputFileError
+from ..number_format import PLAIN_RATE, parse_plain_decimal
 
 REQUIRED_COLUMNS = ("currency", "rate_to_brl")
 
@@ -34,14 +35,13 @@ class CsvRateRepository:
                     raw_rate = (values.get("rate_to_brl") or "").strip()
                     if not currency or not raw_rate:
                         raise InputFileError(f"linha de câmbio incompleta em {self._path}")
-                    try:
-                        rate = Decimal(raw_rate)
-                    except InvalidOperation as err:
-                        raise InputFileError(f"taxa inválida para {currency} em {self._path}") from err
-                    if not rate.is_finite():
-                        raise InputFileError(f"taxa não finita para {currency} em {self._path}")
-                    if rate <= 0:
-                        raise InputFileError(f"taxa não positiva para {currency} em {self._path}")
+                    rate = parse_plain_decimal(raw_rate, PLAIN_RATE)
+                    if rate is None:
+                        raise InputFileError(
+                            f"taxa fora do formato decimal simples para {currency} em {self._path}: {raw_rate!r}"
+                        )
+                    if rate == 0:
+                        raise InputFileError(f"taxa zero para {currency} em {self._path}")
                     if currency in rates:
                         raise InputFileError(f"moeda {currency} repetida na tabela de câmbio {self._path}")
                     rates[currency] = rate

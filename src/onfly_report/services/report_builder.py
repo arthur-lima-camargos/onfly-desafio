@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from ..models import ReservationStatus
+from ..number_format import MONEY_PRECISION
 from ..repositories.protocols import RateSource, ReservationSource
 from .consistency_checks import find_inconsistencies
 from .currency_converter import convert_to_brl, ensure_rates_available
@@ -43,6 +44,11 @@ class ReportBuilder:
         self._now = now
 
     def build(self) -> dict:
+        # A precisão vale para toda a conta de dinheiro, da conversão ao quantize da serialização.
+        with localcontext(prec=MONEY_PRECISION):
+            return self._build()
+
+    def _build(self) -> dict:
         parser = RowParser()
         reservations = [parser.parse(raw) for raw in self._reservation_repository.read()]
         rates = self._rate_repository.read()

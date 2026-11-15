@@ -4,7 +4,7 @@ As fontes fake satisfazem os Protocols ReservationSource e RateSource por estrut
 """
 
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, getcontext
 
 import pytest
 from helpers import BASE
@@ -32,8 +32,20 @@ class InMemoryRates:
         return self._rates
 
 
-def build(rows: list[dict[str, str]], top_n: int = 5, now: datetime | None = FIXED_NOW) -> dict:
-    return ReportBuilder(InMemoryReservations(rows), InMemoryRates(), top_n=top_n, now=now).build()
+def build(
+    rows: list[dict[str, str]],
+    top_n: int = 5,
+    now: datetime | None = FIXED_NOW,
+    rates: dict[str, Decimal] = RATES,
+) -> dict:
+    return ReportBuilder(InMemoryReservations(rows), InMemoryRates(rates), top_n=top_n, now=now).build()
+
+
+def half_up_money(value: int, scale: int) -> str:
+    """Formata value / 10**scale com 2 casas half-up, só com inteiros (oráculo sem Decimal)."""
+    cents, remainder = divmod(value, 10 ** (scale - 2))
+    cents += 2 * remainder >= 10 ** (scale - 2)
+    return f"{cents // 100}.{cents % 100:02d}"
 
 
 # --- by_month ---------------------------------------------------------------------------------
@@ -115,6 +127,42 @@ def test_totals_sum_exact_values_and_round_only_at_the_end():
     assert report["summary"]["total_amount_brl"] == "0.11"
     assert report["by_month"][0]["total_brl"] == "0.11"
     assert report["top_hotels"][0]["total_brl"] == "0.11"
+
+
+# --- Precisão ---------------------------------------------------------------------------------
+
+
+def test_largest_amount_times_largest_rate_is_summed_exactly_over_a_thousand_reservations():
+    """Pior caso que a entrada permite: 21 dígitos x 21 dígitos, 1000 vezes, conferido com inteiros."""
+    rows = [{"reservation_id": f"R-{n}", "currency": "XXX", "amount": "999999999999999.999999"} for n in range(1000)]
+
+    report = build(rows, rates={"XXX": Decimal("999999999.999999999999")})
+
+    expected_total = 1000 * 999999999999999999999 * 999999999999999999999  # escala 10**-18
+    assert report["summary"]["total_amount_brl"] == half_up_money(expected_total, scale=18)
+    assert report["by_month"][0]["total_brl"] == half_up_money(expected_total, scale=18)
+    assert report["top_hotels"][0]["total_brl"] == half_up_money(expected_total, scale=18)
+
+
+def test_average_of_a_total_above_28_digits_is_exact_to_the_cent():
+    """Total de 29 dígitos dividido por 3 noites: a precisão padrão do Decimal já teria arredondado o total."""
+    rows = [
+        {"reservation_id": f"R-{n}", "currency": "USD", "amount": "999999999999999.999999"} for n in range(3)
+    ]
+
+    summary = build(rows)["summary"]
+
+    total = 3 * 999999999999999999999 * 5420000  # escala 10**-12
+    assert summary["total_room_nights"] == 3
+    assert summary["average_nightly_rate_brl"] == half_up_money(total // 3, scale=12)
+
+
+def test_build_does_not_change_the_decimal_precision_of_the_caller():
+    before = getcontext().prec
+
+    build([{}])
+
+    assert getcontext().prec == before == 28
 
 
 def test_empty_source_produces_empty_report():
