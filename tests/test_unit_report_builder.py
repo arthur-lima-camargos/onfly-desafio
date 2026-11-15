@@ -12,6 +12,7 @@ from helpers import BASE
 from onfly_report.exceptions import InputFileError
 from onfly_report.models import RawRow
 from onfly_report.services.report_builder import ReportBuilder
+from onfly_report.services.report_serializer import ReportJson
 
 RATES = {"BRL": Decimal("1.000000"), "USD": Decimal("5.420000"), "EUR": Decimal("5.880000")}
 FIXED_NOW = datetime(2025, 7, 1, 10, 0, 0, tzinfo=timezone(timedelta(hours=-3)))
@@ -38,7 +39,7 @@ def build(
     top_n: int = 5,
     now: datetime | None = FIXED_NOW,
     rates: dict[str, Decimal] = RATES,
-) -> dict:
+) -> ReportJson:
     return ReportBuilder(InMemoryReservations(rows), InMemoryRates(rates), top_n=top_n, now=now).build()
 
 
@@ -219,6 +220,13 @@ def test_report_version_and_injected_generated_at():
     report = build([])
 
     assert report["report_version"] == "1.0"
+    assert report["generated_at"] == "2025-07-01T10:00:00-03:00"
+
+
+def test_injected_now_in_another_timezone_is_converted_to_minus_three():
+    """13:00 UTC é 10:00 em -03:00; antes o relatório saía com +00:00, fora do contrato."""
+    report = build([], now=datetime(2025, 7, 1, 13, 0, 0, tzinfo=timezone.utc))
+
     assert report["generated_at"] == "2025-07-01T10:00:00-03:00"
 
 
