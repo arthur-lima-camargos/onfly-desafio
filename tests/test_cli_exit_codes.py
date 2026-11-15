@@ -151,6 +151,23 @@ def test_largest_accepted_amounts_are_summed_exactly_without_traceback(tmp_path)
     )
 
 
+def test_every_invalid_line_is_reported_in_one_run(tmp_path):
+    """Antes o CLI parava na primeira linha inválida: corrigir o arquivo exigia uma execução por erro."""
+    rows = [row(rooms="0"), VALID_ROW, row(reservation_id="R-3", amount="-1"), row(reservation_id="R-4", status="x")]
+
+    process, output_path = run_cli_rows(tmp_path, rows)
+
+    assert process.returncode == 2
+    assert "3 linhas inválidas:" in process.stderr
+    assert "linha 2 inválida: rooms deve ser maior ou igual a 1" in process.stderr
+    assert "linha 4 inválida: amount fora do formato decimal simples" in process.stderr
+    assert "linha 5 inválida: status desconhecido" in process.stderr
+    assert "linha 3" not in process.stderr
+    assert "Traceback" not in process.stderr
+    assert process.stdout == ""
+    assert not output_path.exists()
+
+
 def test_invalid_line_is_reported_by_number(tmp_path):
     process, _ = run_cli_rows(tmp_path, [VALID_ROW, row(reservation_id="R-2"), row(reservation_id="R-3", rooms="x")])
 

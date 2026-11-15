@@ -290,6 +290,17 @@ def test_confirmed_reservation_in_currency_without_rate_is_still_an_input_error(
         build([{"currency": "GBP"}])
 
 
+def test_invalid_lines_are_all_reported_before_anything_is_aggregated():
+    rows = [{"rooms": "0"}, {"reservation_id": "R-2"}, {"reservation_id": "R-3", "status": "PENDING"}]
+
+    with pytest.raises(InputFileError) as error:
+        build(rows)
+
+    assert str(error.value).splitlines()[0] == "2 linhas inválidas:"
+    assert "linha 2 inválida" in str(error.value)
+    assert "linha 4 inválida" in str(error.value)
+
+
 def test_consistent_input_logs_nothing(caplog):
     with caplog.at_level("WARNING", logger="onfly_report"):
         build([{"reservation_id": "R-1"}, {"reservation_id": "R-2"}])

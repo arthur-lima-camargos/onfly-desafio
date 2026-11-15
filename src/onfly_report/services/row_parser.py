@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from datetime import date
 from decimal import Decimal
 
@@ -25,6 +26,9 @@ REQUIRED_FIELDS = (
     "amount",
 )
 
+# Teto de linhas inválidas listadas no erro; um arquivo todo errado não vira milhares de linhas de log.
+MAX_REPORTED_LINES = 20
+
 
 class RowParser:
     """Converte a linha crua em Reservation.
@@ -32,6 +36,24 @@ class RowParser:
     O arquivo de entrada é consistente; falhas de formato são erro de arquivo, não dado a
     ser descartado.
     """
+
+    def parse_all(self, rows: Iterable[RawRow]) -> list[Reservation]:
+        """Converte todas as linhas; se houver inválidas, falha uma vez só, listando todas.
+
+        Quem opera a exportação vê os problemas do arquivo em uma execução, em vez de corrigir um
+        erro por tentativa.
+        """
+        reservations: list[Reservation] = []
+        errors: list[str] = []
+        for raw in rows:
+            try:
+                reservations.append(self.parse(raw))
+            except InputFileError as err:
+                errors.append(str(err))
+
+        if errors:
+            raise InputFileError(describe_invalid_lines(errors))
+        return reservations
 
     def parse(self, raw: RawRow) -> Reservation:
         try:
@@ -68,6 +90,18 @@ class RowParser:
             payment_method=values.get("payment_method", ""),
             line_number=raw.line_number,
         )
+
+
+def describe_invalid_lines(errors: list[str]) -> str:
+    """Uma linha inválida mantém a mensagem simples; várias viram uma lista, uma por linha do log."""
+    if len(errors) == 1:
+        return errors[0]
+
+    lines = [f"{len(errors)} linhas inválidas:", *errors[:MAX_REPORTED_LINES]]
+    hidden = len(errors) - MAX_REPORTED_LINES
+    if hidden > 0:
+        lines.append(f"... e mais {hidden}")
+    return "\n  ".join(lines)
 
 
 def parse_civil_date(text: str, field: str) -> date:

@@ -49,8 +49,7 @@ class ReportBuilder:
             return self._build()
 
     def _build(self) -> dict:
-        parser = RowParser()
-        reservations = [parser.parse(raw) for raw in self._reservation_repository.read()]
+        reservations = RowParser().parse_all(self._reservation_repository.read())
         rates = self._rate_repository.read()
         ensure_rates_available(reservations, rates)
         for message in (*find_inconsistencies(reservations), *unbilled_currencies_without_rate(reservations, rates)):

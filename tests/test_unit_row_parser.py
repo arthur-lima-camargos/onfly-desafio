@@ -11,7 +11,7 @@ from helpers import BASE
 
 from onfly_report.exceptions import InputFileError
 from onfly_report.models import RawRow, ReservationStatus
-from onfly_report.services.row_parser import REQUIRED_FIELDS, RowParser
+from onfly_report.services.row_parser import MAX_REPORTED_LINES, REQUIRED_FIELDS, RowParser
 
 
 def parse(line_number: int = 2, /, **overrides: str):
@@ -237,3 +237,78 @@ def test_amount_beyond_the_size_limits_is_rejected(amount):
 def test_rejected_amount_message_shows_the_line_and_the_offending_text():
     with pytest.raises(InputFileError, match=r"linha 9 inválida: amount fora do formato.*'1_000\.50'"):
         parse(9, amount="1_000.50")
+
+
+# --- Arquivo inteiro: todas as linhas inválidas de uma vez ------------------------------------
+
+
+def parse_all(*rows: dict[str, str]):
+    """Linhas numeradas a partir da 2, como no arquivo (a 1 é o cabeçalho)."""
+    raw_rows = [RawRow(line_number=index + 2, values={**BASE, **row}) for index, row in enumerate(rows)]
+    return RowParser().parse_all(raw_rows)
+
+
+def invalid_lines_message(*rows: dict[str, str]) -> str:
+    with pytest.raises(InputFileError) as error:
+        parse_all(*rows)
+    return str(error.value)
+
+
+def test_all_valid_rows_are_converted_in_file_order():
+    reservations = parse_all({"reservation_id": "R-1"}, {"reservation_id": "R-2"}, {"reservation_id": "R-3"})
+
+    assert [(row.reservation_id, row.line_number) for row in reservations] == [("R-1", 2), ("R-2", 3), ("R-3", 4)]
+
+
+def test_empty_file_converts_to_no_reservations():
+    assert parse_all() == []
+
+
+def test_a_single_invalid_line_keeps_the_simple_message():
+    message = invalid_lines_message({}, {"rooms": "0"}, {})
+
+    assert message == "linha 3 inválida: rooms deve ser maior ou igual a 1: 0"
+
+
+def test_every_invalid_line_is_listed_in_file_order_with_its_own_reason():
+    message = invalid_lines_message({"rooms": "0"}, {}, {"status": "PENDING"}, {"checkin_date": "10/01/2025"})
+
+    assert message.splitlines() == [
+        "3 linhas inválidas:",
+        "  linha 2 inválida: rooms deve ser maior ou igual a 1: 0",
+        "  linha 4 inválida: status desconhecido: 'PENDING' (esperado: CONFIRMED, CANCELLED, NO_SHOW)",
+        "  linha 5 inválida: checkin_date fora do formato YYYY-MM-DD: '10/01/2025'",
+    ]
+
+
+def test_valid_lines_between_invalid_ones_are_not_mentioned():
+    message = invalid_lines_message({"rooms": "0"}, {}, {}, {"rooms": "0"})
+
+    assert "linha 3" not in message
+    assert "linha 4" not in message
+
+
+def test_a_line_with_several_problems_is_listed_once_with_the_first_reason():
+    """Uma entrada por linha: a contagem do cabeçalho é de linhas, não de campos errados."""
+    message = invalid_lines_message({"rooms": "0", "amount": "abc"}, {"status": "PENDING"})
+
+    assert message.splitlines()[0] == "2 linhas inválidas:"
+    assert message.count("linha 2 inválida") == 1
+
+
+def test_list_is_capped_and_the_rest_is_counted():
+    message = invalid_lines_message(*[{"rooms": "0"}] * (MAX_REPORTED_LINES + 5))
+
+    lines = message.splitlines()
+    assert lines[0] == f"{MAX_REPORTED_LINES + 5} linhas inválidas:"
+    assert len(lines) == 1 + MAX_REPORTED_LINES + 1
+    assert lines[-2].startswith(f"  linha {MAX_REPORTED_LINES + 1} inválida")
+    assert lines[-1] == "  ... e mais 5"
+
+
+def test_exactly_the_cap_lists_everything_without_a_remainder_line():
+    message = invalid_lines_message(*[{"rooms": "0"}] * MAX_REPORTED_LINES)
+
+    lines = message.splitlines()
+    assert len(lines) == 1 + MAX_REPORTED_LINES
+    assert "e mais" not in message
